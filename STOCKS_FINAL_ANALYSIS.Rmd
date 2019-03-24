@@ -1,0 +1,461 @@
+---
+title: "Final Assignment Stocks"
+author: "Stavros Tsentemeidis"
+date: "12/18/2018"
+output:   
+  prettydoc::html_pretty:
+  theme: leonids
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+## Install & Load Libraries
+
+The first step, is to start installing and loading all the necessary libraries needed for our analysis. This is done by calling the below mentioned script.
+
+```{r Load Libraries, echo = FALSE, results="hide"}
+### THIS PART CHECKS IF NECESSARY PACKAGES ARE INSTALLED AND LOADED
+start_time <- Sys.time()
+print(paste0('---START--- Starting at ',start_time))
+
+packages_list <- c('ggplot2',
+                   'quantmod',
+                   'readxl',
+                   'tseries',
+                   'lubridate',
+                   'highcharter',
+                   'zoo',
+                   'lattice',
+                   'mice',
+                   'Amelia',
+                   'tidyr',
+                   'gridExtra',
+                   'leaflet',
+                   'jtools',
+                   'lattice',
+                   'car',
+                   'caret',
+                   'plotly',
+                   'data.table',
+                   'cluster',
+                   'fpc',
+                   'scales',
+                   'prettydoc')
+
+for (i in packages_list){
+  if(!i%in%installed.packages()){
+    install.packages(i, dependencies = TRUE)
+    library(i, character.only = TRUE)
+  } else {
+    library(i, character.only = TRUE)
+  }
+}
+```
+
+```{r Load Libraries Msg, echo = FALSE}
+print(paste0('[', round(difftime(Sys.time(),start_time, units = 'secs'),1), 's]: ',
+             'All necessary packages installed and loaded'))
+```
+
+## LOAD DATA
+
+To load stock data from Yahoo, we use the **get.hist.quote** function, as we want to get the stocks with dates and only their  **Close** prices, which are needed for our analysis. This function, helps us get the necessary information from the **first** step, without having to download everything and subset!
+
+```{r Load Data, echo = TRUE, results="hide"}
+nasdaq_symbols <- read_excel("dataset/nasdaq_symbols.xlsx")
+all_stocks <- NULL
+increment <- 1
+for (i in nasdaq_symbols$Symbol){
+  temp_stocks <- get.hist.quote(instrument = i,quote = 'AdjClose', provider = 'yahoo', compression = 'd', quiet = TRUE, retclass = 'zoo')
+  if(increment == 1){
+    all_stocks <- temp_stocks
+  }
+  else{
+    all_stocks <- merge(all_stocks,temp_stocks)
+  }
+  increment <- increment + 1
+}
+```
+
+##CHECK FOR Nas ...
+
+Checking for NA values is necessary, as our script is intended to serve any given time frame. This means that some stocks at certain time frames will not have values for closing price.
+
+```{r Assign column names, echo=FALSE }
+# Assign colnames (the same as the symbol)
+colnames(all_stocks) = nasdaq_symbols$Symbol
+
+# change to timeseries format
+all_stocks <- xts(all_stocks) 
+```
+
+```{r Get a Summary, echo=TRUE, , results="hide"}
+# Check for NAs
+summary(all_stocks)
+nrow(all_stocks)
+```
+
+## ... AND DEAL WITH THEM
+
+In order to deal with NA values, as they will affect the return calculations, it is decided to impute the **nearest Non - NA value**, to any stock price that might have NA. 
+
+```{r Impute Nas, echo=TRUE}
+all_stocks_complete <- all_stocks %>%
+  na.locf(., na.rm = FALSE) %>%
+  na.locf(., fromLast = TRUE)
+
+nrow(all_stocks_complete)
+```
+
+## CALCULATE THE DAILY LOG RETURN
+
+After imputing the NA values, we can calculate the **daily log return**. Several benefits of using log returns, both theoretic and algorithmic.
+
+* Log-normality: is handy given much of classic statistics presumes normality.
+
+* Approximate raw-log equality: when returns are very small (common for trades with short holding durations), the  approximation ensures they are close in value to raw returns.
+
+* For regression type calculations, taking logs of values can yield better results.
+
+We need to address one thing though:
+- The last row will have NAs as it does not have a previous day to be calculated, so it is removed.
+
+```{r Calculate Returns, echo=TRUE}
+
+all_return_daily <- diff(log(all_stocks_complete))
+
+all_return_daily <- all_return_daily[-1,]
+```
+
+## ADD DAY, MONTH, YEAR
+
+At this step, we add the **Day**, **Month** and **Year** as separate columns to oUr datasets, for possible further use.
+
+```{r Add Day Month Year, echo=TRUE}
+
+all_stocks_complete$day <- day(index(all_stocks_complete))
+all_stocks_complete$month <- month(index(all_stocks_complete))
+all_stocks_complete$year <- year(index(all_stocks_complete))
+
+all_return_daily$day <- day(index(all_return_daily))
+all_return_daily$month <- month(index(all_return_daily))
+all_return_daily$year <- year(index(all_return_daily))
+```
+
+## LAST CHANGES FOR FINAL DATASET
+
+At this stage, we do the last adjustments like
+
+* Convert the data into **table** format.
+
+* Melt function to change the data into a **long format**.
+
+* Remove **scientific format** for stock price.
+
+* Create a proper **Date** column as it the date is index.
+
+```{r Further Changes, echo=FALSE, , results="hide"}
+all_stocks_complete <- data.table(as.data.frame(coredata(all_stocks_complete)))
+all_return_daily<- data.table(as.data.frame(coredata(all_return_daily)))
+
+all_stocks_complete <- data.table(melt(all_stocks_complete, id.vars = c('day','month','year')))
+all_return_daily <- data.table(melt(all_return_daily, id.vars = c('day','month','year')))
+
+all_stocks_complete$date <- as.Date(with(all_stocks_complete, paste(day, month, year,sep="-")), "%d-%m-%Y")
+all_return_daily$date <- as.Date(with(all_return_daily, paste(day, month, year,sep="-")), "%d-%m-%Y")
+
+names(all_stocks_complete) <- c('day','month','year','symbol','stock_price','date')
+names(all_return_daily) <- c('day','month','year','symbol','stock_log_return','date')
+
+format(all_stocks_complete$stock_price, scientific=FALSE)
+format(all_return_daily$stock_log_return, scientific=FALSE)
+```
+
+## AND THIS IS OUR FINAL DATASET (data per day)
+
+```{r Final Preview, echo=TRUE}
+tail(all_stocks_complete)
+tail(all_return_daily)
+```
+
+## GETTING VOLATILITY (SD) TO PLAY
+
+At this step we create different aggregations of the data regarding **Mean** and **Standard Deviation**. All of them can be seen on the script, but below we mention the one used for our analysis.
+
+```{r Means + Volatility, echo=TRUE}
+return_mean_daily_by_symbol <- all_return_daily[, list(avg_stock_return = mean(stock_log_return),
+                                                       sd_stock_return  = sd(stock_log_return)),
+                                                by = list(symbol)]
+
+return_mean_daily_by_symbol <- merge(return_mean_daily_by_symbol,nasdaq_symbols, by.x = 'symbol', by.y = 'Symbol')
+
+```
+
+
+```{r EXTRA aggregations, echo=FALSE}
+return_mean_daily_by_symbol
+
+stocks_mean_daily_by_symbol <- all_stocks_complete[, list(avg_stock_price = mean(stock_price),
+                                                          sd_stock_price = sd(stock_price)),
+                                                   by = list(symbol)]
+
+stocks_mean_daily_by_symbol <- merge(stocks_mean_daily_by_symbol,nasdaq_symbols, by.x = 'symbol', by.y = 'Symbol')
+
+stocks_mean_daily_by_symbol_year <- all_stocks_complete[, list(avg_stock_price = mean(stock_price),
+                                                               sd_stock_price = sd(stock_price)),
+                                                        by = list(date,symbol)]
+
+stocks_mean_daily_by_symbol_year <- merge(stocks_mean_daily_by_symbol_year,nasdaq_symbols, by.x = 'symbol', by.y = 'Symbol')
+
+stocks_mean_daily_by_month_year <- all_stocks_complete[, list(avg_stock_price = mean(stock_price),
+                                                              sd_stock_price = sd(stock_price)),
+                                                       by = list(year,month)]
+
+
+return_mean_daily_by_symbol_year <- all_return_daily[, list(avg_stock_return  = mean(stock_log_return),
+                                                            sd_stock_return  = sd(stock_log_return)),
+                                                     by = list(date,symbol)]
+
+return_mean_daily_by_symbol_year <- merge(return_mean_daily_by_symbol_year,nasdaq_symbols, by.x = 'symbol', by.y = 'Symbol')
+
+return_mean_daily_by_month_year <- all_return_daily[, list(avg_stock_return  = mean(stock_log_return),
+                                                           sd_stock_return  = sd(stock_log_return)),
+                                                    by = list(year,month)]
+```
+
+## FUNCTIONS CREATED FOR RISK ANALYSIS
+
+At this step, 2 **functions** are created:
+One to return stock symbol with **maximum** risk in a given period of time between start and end.
+*(Risk = average risk, calculated as standard deviation of daily returns)*
+
+```{r FUNCTION FOR MAX, echo=TRUE}
+
+MaximumRisk <- function(d=all_return_daily, start, end)
+{
+  data.period <-subset(all_return_daily, all_return_daily$date >= as.Date(start) & all_return_daily$date <= as.Date(end))
+  for(i in nrow(data.period)){
+    print(data.period[which(data.period$stock_log_return == max(data.period$stock_log_return)),c('symbol','stock_log_return')])
+  }
+}
+
+MaximumRisk(all_return_daily, '2016-01-01', '2016-01-31')
+```
+
+## FUNCTIONS CREATED FOR RISK ANALYSIS (II)
+
+One to return stock symbol with **lowest** risk in a given period of time between start and end.
+*(Risk = average risk, calculated as standard deviation of daily returns)*
+
+```{r FUNCTION FOR MIN, echo=TRUE}
+
+LowestRisk <- function(d=all_return_daily, start, end)
+{
+  data.period <-subset(all_return_daily, all_return_daily$date >= as.Date(start) & all_return_daily$date <= as.Date(end))
+  for(i in nrow(data.period)){
+    print(data.period[which(data.period$stock_log_return == min(data.period$stock_log_return)),c('symbol','stock_log_return')])
+  }
+}
+
+LowestRisk(all_return_daily, '2016-01-01', '2016-01-31')
+```
+
+##FUNCTIONS CREATED FOR PLOTING
+
+At this part we create functions that will provide time series plots for the **daily stock return**. 
+*(ggplotly = in order for the interactive chart to be faster, we subset only from **2000** and after)*
+
+```{r FUNCTION FOR PLOTING DAILY RETURN , echo=TRUE}
+after_2000_return <- all_return_daily[date>'2000-01-01']
+plotting_returns <- function(x){
+  if (x %in% nasdaq_symbols$Symbol){
+    
+    ggplotly(ggplot(data=after_2000_return[after_2000_return$symbol == x,], aes(x=date, y=stock_log_return))+
+               geom_line(color='cornflowerblue')+
+               ggtitle("Daily Stock Returns") +
+               xlab("Time Frame") + ylab("Stock Return")+
+               theme_minimal()
+    )
+  }
+}
+
+```
+
+## PLOTING DAILY RETURN
+
+```{r  PLOTING DAILY RETURN , echo=FALSE}
+plotting_returns('AAPL')
+```
+
+##FUNCTIONS CREATED FOR PLOTING (II)
+
+At this part we create functions that will provide time series plots for the **daily stock price**.
+*(ggplotly =in order for the interactive chart to be faster, we subset only from **2000** and after)*
+
+```{r FUNCTION FOR PLOTING DAILY STOCK PRICE , echo=TRUE}
+after_2000_stocks <- all_stocks_complete[date>'2000-01-01'] 
+plotting_stocks_price <- function(x){
+  if (x %in% nasdaq_symbols$Symbol){
+    
+    ggplotly(ggplot(data=after_2000_stocks[after_2000_stocks$symbol == x,], aes(x=date,y=stock_price))+
+               geom_line(color='cornflowerblue')+
+               ggtitle("Daily Stock Price") +
+               xlab("Time Frame") + ylab("Stock Price")+
+               theme_minimal()
+    )
+  }
+}
+```
+## PLOTING DAILY STOCK PRICE
+
+```{r  PLOTING DAILY STOCK PRICE , echo=FALSE}
+plotting_stocks_price('AAPL')
+```
+
+## LINEAR MODEL
+
+In order to test the **relationship** between mean and volatility, we will apply a linear regression model.
+First lets have a look at the relationship between the two through a scatter plot.
+
+```{r  DEVELOP LINEAR MODEL 0 , echo=FALSE}
+ggplotly(ggplot(return_mean_daily_by_symbol,aes(x=return_mean_daily_by_symbol$avg_stock_return,
+                                       y=return_mean_daily_by_symbol$sd_stock_return))+
+  geom_point(size=2, colour='orange')+
+  ggtitle("Plot returns with volatility") +
+  xlab("Avg Return") + ylab("Avg Volatility")+
+  geom_text(label=return_mean_daily_by_symbol$symbol, size =2.75)+
+  theme_minimal())
+```
+
+We then split our data to *train* and *test* sample, by 80% - 20% respectively.
+
+```{r  DEVELOP LINEAR MODEL 1 , echo=TRUE}
+set.seed(2018)
+train.size <- 0.8
+train.index <- sample.int(length(return_mean_daily_by_symbol$avg_stock_return), round(length(return_mean_daily_by_symbol$avg_stock_return) * train.size))
+train.sample <- return_mean_daily_by_symbol[train.index,]
+test.sample <- return_mean_daily_by_symbol[-train.index,]
+```
+
+Develop the *model* with the mean return as response, and the volatility as independent variable.
+
+```{r  DEVELOP LINEAR MODEL 2 , echo=TRUE}
+model_0 <- lm(avg_stock_return~sd_stock_return, data = train.sample)
+```
+
+Then, we analyze the effect of the absolute value of the VIX on stock market returns. Seeing the output of the regression analysis, we can conclude that the VIX and the returns have a slightly **positive** relationship with a coefficient of **-0.01363** and an (intercept) coefficient of **0.0001795**.
+Considering the regression output we can conclude that the level of the VIX has a statistically 
+significant effect on stock market returns, at a **20%** level.
+
+```{r  DEVELOP LINEAR MODEL 3 , echo=TRUE}
+lm_stats <- summary(model_0)
+lm_stats
+```
+
+As we cannot be accurate about our estimates, let's calculate the **confidence intervals** of the Volatility.
+
+```{r  DEVELOP LINEAR MODEL 4 , echo=TRUE}
+confint(model_0, level=.95)
+plot_summs(model_0, scale = TRUE, plot.distributions = TRUE, inner_ci_level = 0.95)
+```
+
+## CLUSTERING
+
+In order to do our Clustering Analysis we need to make some adjustments
+
+* Assign the dataframe to a new one (for our convenience)
+
+* Remove text fields from the data table, for the analysis.
+
+* Take care of NULLS if any
+
+```{r  DEVELOP CLUSTER ANALYSIS 1 , echo=TRUE}
+return_mean_daily_0 <- return_mean_daily_by_symbol
+return_mean_daily_0$symbol <- NULL
+return_mean_daily_0$Name <- NULL
+```
+
+After that we need to rescale our variables in order ot have better results.
+
+```{r  DEVELOP CLUSTER ANALYSIS 2 , echo=TRUE, results='hide'}
+rescale(return_mean_daily_0$avg_stock_return)
+rescale(return_mean_daily_0$sd_stock_return)
+```
+
+Then we implement the **k-means** algorithm in order to get our clusters. After several trials, it is decided that we take as k=3 number of clusters.
+
+```{r  DEVELOP CLUSTER ANALYSIS 3 , echo=TRUE}
+results <- kmeans(return_mean_daily_0, 3)
+table_cluster <-table(return_mean_daily_by_symbol$symbol, results$cluster)
+head(table_cluster,10)
+```
+
+In order to **visualize** our results we create several plots.
+
+```{r  DEVELOP CLUSTER ANALYSIS 4 , echo=FALSE}
+results$cluster=factor(results$cluster)
+centers=as.data.frame(results$centers)
+```
+
+# Plot 1
+```{r  DEVELOP CLUSTER ANALYSIS 5 , echo=FALSE}
+ggplotly(ggplot(data=return_mean_daily_0[,c("avg_stock_return", "sd_stock_return")], aes(x=return_mean_daily_0$avg_stock_return, 
+   y=return_mean_daily_0$sd_stock_return, 
+   color=results$cluster )) + 
+  geom_point(cex=1.5)+
+  ggtitle("K-Means") +
+  xlab("Average Return") + ylab(" Volatility"))
+```
+
+
+# Plot 2
+```{r  DEVELOP CLUSTER ANALYSIS 6 , echo=FALSE}
+plotcluster(return_mean_daily_0[,c("avg_stock_return", "sd_stock_return")], results$cluster)
+
+```
+
+# Plot 3
+```{r  DEVELOP CLUSTER ANALYSIS 7 , echo=FALSE}
+clusplot(return_mean_daily_0[,c("avg_stock_return", "sd_stock_return")], results$cluster, color=TRUE, shade=FALSE, labels = 2, lines=0,
+         xlab = "Average Return", ylab = " Volatility", main = 'K-means')
+```
+
+
+Another thing that should be noticed and observed is the existence of outliers. Before that though, we need to calculate twi parameters:
+
+* The **centers** of our clusters.
+
+* The **distances** of the observations from their center, in order to keep the max 5 distances.
+
+```{r  DEVELOP CLUSTER ANALYSIS 8 , echo=TRUE}
+centers1 <- results$centers[results$cluster, ]
+distances <- sqrt(rowSums((return_mean_daily_0 - centers1)^2))
+outliers <- order(distances, decreasing=T)[1:5]
+print(outliers)
+print(return_mean_daily_0[outliers,])
+```
+
+So, let's detect them through plotting!
+
+```{r  DEVELOP CLUSTER ANALYSIS 9 , echo=FALSE}
+plot(return_mean_daily_0[,c("avg_stock_return", "sd_stock_return")], pch=19, col=results$cluster, cex=1)
+points(results$centers[,c("avg_stock_return", "sd_stock_return")], col=1:3, pch=15, cex=2)
+points(return_mean_daily_0[outliers, c("avg_stock_return", "sd_stock_return")], pch="+", col=4, cex=3)
+```
+
+
+## CONCLUSION
+
+So, taking into consideration all the above we can make the below mentioned points:
+
+1. Through the **plotting** functions any stock can be explored, in any desired time frame.
+
+2. Through **risk** functions, any stock can with high or low risk can be detected, also for the same time frame (or any other)
+
+3. Lastly, after we have detected our desire stock (or stocks) from the previous mechanisms, we can detect at which **cluster group** this stock lays, in order to expand our portfolio to other stocks with common characteristics.
+
+All in all, the purpose of my *assignment* was to provide anyone with the most basic and important tools to be able to make their own analysis regarding stocks and make their own decisions regarding what is *important* (or not) or what is of *risk* (or not) for them.
+
+
