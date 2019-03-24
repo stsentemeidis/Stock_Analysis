@@ -1,7 +1,5 @@
 # Stock Analysis R
 
-[HTML Report click here](file:///Users/stavrostsentemeidis/Google%20Drive/00.%20O-1-7%20-%20Term%201/01.%20Programming%20R/Madrid%20Pollution/Madrid_Pollution_Report.html)
-
 ### Description
 
 Download the **nasdaq_symbols.xlsx** file from the datasets area in the campus. It contains symbols and companies names for the Nasdaq stock market.
