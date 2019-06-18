@@ -1,4 +1,4 @@
-# Stock Analysis R
+# Stock Analysis EDA
 
 ### Description
 
@@ -12,7 +12,7 @@ Create a clustering of companies, using the mean and sd of daily returns as the 
 
 Analyze the results.
 
-All the files of this project are saved in a [GitHub repository](https://github.com/stsentemeidis/Stock_Analysis_R).
+All the files of this project are saved in a [GitHub repository](https://github.com/stsentemeidis/Stock_Analysis).
 
 The work is done by the Stavros Tsentemeidis student of the IE MBD '18 intake and any work copied from this repository should cite the following:
 
